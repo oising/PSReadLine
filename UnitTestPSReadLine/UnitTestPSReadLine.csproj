@@ -76,6 +76,7 @@
     <Compile Include="RenderTest.cs" />
     <Compile Include="ScreenCaptureTest.cs" />
     <Compile Include="UndoRedoTest.cs" />
+    <Compile Include="CompletionBusyTest.cs" />
     <Compile Include="UnitTestReadLine.cs" />
     <Compile Include="WordsTest.cs" />
     <Compile Include="WordsTests.VI.cs" />

@@ -116,6 +116,11 @@ namespace Microsoft.PowerShell
 
         public const int DefaultDingDuration = 50;
 
+        /// <summary>
+        /// Timeout before tab completion will be cancelled, in milliseconds
+        /// </summary>
+        public const int DefaultCompletionTimeout = 10000;
+
         public const int DefaultCompletionQueryItems = 100;
 
         // Default includes all characters PowerShell treats like a dash - em dash, en dash, horizontal bar
@@ -144,6 +149,7 @@ namespace Microsoft.PowerShell
             MaximumKillRingCount = DefaultMaximumKillRingCount;
             HistorySearchCursorMovesToEnd = DefaultHistorySearchCursorMovesToEnd;
             ShowToolTips = DefaultShowToolTips;
+            CompletionTimeout = DefaultCompletionTimeout;
             DingDuration = DefaultDingDuration;
             DingTone = DefaultDingTone;
             BellStyle = DefaultBellStyle;
@@ -224,6 +230,10 @@ namespace Microsoft.PowerShell
         public bool ShowToolTips { get; set; }
         public int DingTone { get; set; }
         public int CompletionQueryItems { get; set; }
+        /// <summary>
+        /// Milliseconds to wait for tab completion results before aborting.
+        /// </summary>
+        public int CompletionTimeout { get; set; }
         public string WordDelimiters { get; set; }
 
         /// <summary>
@@ -531,6 +541,15 @@ namespace Microsoft.PowerShell
             set { _completionQueryItems = value; }
         }
         internal int? _completionQueryItems;
+
+        [Parameter(ParameterSetName = "OptionsSet")]
+        [ValidateRange(2000, int.MaxValue)]
+        public int CompletionTimeout
+        {
+            get { return _completionTimeout.GetValueOrDefault(); }
+            set { _completionTimeout = value; }
+        }
+        internal int? _completionTimeout;
 
         [Parameter(ParameterSetName = "OptionsSet")]
         public string WordDelimiters { get; set; }

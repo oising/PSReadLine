@@ -133,6 +133,10 @@ namespace Microsoft.PowerShell
             {
                 Options.CompletionQueryItems = options.CompletionQueryItems;
             }
+            if (options._completionTimeout.HasValue)
+            {
+                Options.CompletionTimeout = options.CompletionTimeout;
+            }
             if (options.WordDelimiters != null)
             {
                 Options.WordDelimiters = options.WordDelimiters;

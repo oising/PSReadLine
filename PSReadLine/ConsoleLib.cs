@@ -3,6 +3,7 @@ Copyright (c) Microsoft Corporation.  All rights reserved.
 --********************************************************************/
 
 using System;
+using System.Diagnostics;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -95,6 +96,9 @@ namespace Microsoft.PowerShell.Internal
         [DllImport("GDI32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool GetCharWidth32(IntPtr hdc, uint first, uint last, out int width);
 
+        [DllImport("User32.Dll", SetLastError = true, EntryPoint = "PostMessageW", CharSet = CharSet.Unicode)]
+        public static extern bool PostMessage(IntPtr hWnd, uint msg, int wParam, int lParam);
+		
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern IntPtr CreateFile
         (
@@ -118,7 +122,7 @@ namespace Microsoft.PowerShell.Internal
             internal uint R
             {
                 get { return ColorDWORD & 0xff; }
-            }
+    }
 
             internal uint G
             {
@@ -645,7 +649,7 @@ namespace Microsoft.PowerShell.Internal
             NativeMethods.ReadConsoleOutput(handle, result,
                 readBufferSize, readBufferCoord, ref readRegion);
             return result;
-        }
+    }
 
         [SuppressMessage("Microsoft.Reliability", "CA2001:AvoidCallingProblematicMethods",
             Justification = "Then the API we pass the handle to will return an error if it is invalid. They are not exposed.")]

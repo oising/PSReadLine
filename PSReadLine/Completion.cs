@@ -11,7 +11,8 @@ using System.Globalization;
 using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
-using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.PowerShell.Internal;
 
 namespace Microsoft.PowerShell
@@ -22,6 +23,9 @@ namespace Microsoft.PowerShell
         private int _tabCommandCount;
         private CommandCompletion _tabCompletions;
         private Runspace _runspace;
+        private bool _abortingCompletion;
+        private bool _gotCompletions;
+        private CancellationTokenSource _explicitCancel;
 
         // Stub helper method so completion can be mocked
         [ExcludeFromCodeCoverage]
@@ -201,36 +205,197 @@ namespace Microsoft.PowerShell
 
         private CommandCompletion GetCompletions()
         {
-            if (_tabCommandCount == 0)
+            System.Management.Automation.PowerShell ps;
+            if (!_mockableMethods.RunspaceIsRemote(_runspace))
             {
-                try
-                {
-                    _tabCompletions = null;
-
-                    // Could use the overload that takes an AST as it's faster (we've already parsed the
-                    // input for coloring) but that overload is a little more complicated in passing in the
-                    // cursor position.
-                    System.Management.Automation.PowerShell ps;
-                    if (!_mockableMethods.RunspaceIsRemote(_runspace))
-                    {
-                        ps = System.Management.Automation.PowerShell.Create(RunspaceMode.CurrentRunspace);
-                    }
-                    else
-                    {
-                        ps = System.Management.Automation.PowerShell.Create();
-                        ps.Runspace = _runspace;
-                    }
-                    _tabCompletions = _mockableMethods.CompleteInput(_buffer.ToString(), _current, null, ps);
-
-                    if (_tabCompletions.CompletionMatches.Count == 0)
-                        return null;
-                }
-                catch (Exception)
-                {
-                }                
+                ps = System.Management.Automation.PowerShell.Create(RunspaceMode.CurrentRunspace);
+            }
+            else
+            {
+                ps = System.Management.Automation.PowerShell.Create();
+                ps.Runspace = _runspace;
             }
 
-            return _tabCompletions;
+            // TODO: hoist cancel tokens to field level?
+            _explicitCancel = new CancellationTokenSource();
+            _abortingCompletion = false;
+            _gotCompletions = false;
+
+            // ReSharper disable once MethodSupportsCancellation
+            var watchdogTask = Task.Factory.StartNew(
+                delegate
+                {
+                    WatchdogImpl(
+                        TimeSpan.FromMilliseconds(Options.CompletionTimeout),
+                        _explicitCancel.Token);
+                });
+
+            // ReSharper disable once MethodSupportsCancellation
+            var spinnerTask = Task.Factory.StartNew(
+                delegate { SpinnerImpl(_explicitCancel, busyThreshold: 1500); });
+
+            // This task CANNOT be canceled with a regular cancellation token due to the
+            // blocking Console.ReadKey call; any attempt to do so will end the task but the
+            // Console will continue to be polled and will swallow keystrokes.
+            var abortTask = Task.Factory.StartNew(
+                delegate { AbortListenerImpl(ps); });
+
+            // call out to powershell tab completion
+            var completions = GetCompletionsImpl(ps);
+
+            // was completion aborted?
+            if (ps.InvocationStateInfo.Reason is PipelineStoppedException)
+            {
+                // yes, either timeout or explicit; either way, both tasks are completed
+                Ding();
+                completions = null;
+            }
+            else
+            {
+                // no, we got 'em.
+                _gotCompletions = true;
+            }
+
+            if (_gotCompletions)
+            {
+                // End "abort" task by injecting <ESC> into the console input loop; this task 
+                // also cancels the timeout watchdog for us on the way out the door.
+                SendAbort();
+            }
+
+            try
+            {
+                Task.WaitAll(spinnerTask, abortTask);
+            }
+            catch (AggregateException e)
+            {
+                e.Handle(inner => inner is TaskCanceledException);
+            }
+
+            return completions;
+        }
+
+        private void AbortListenerImpl(System.Management.Automation.PowerShell ps)
+        {
+            // if unbound, will return default(ConsoleKeyInfo)
+            var abortKey = _dispatchTable.Keys.FirstOrDefault(
+                k => _dispatchTable[k].Action == Abort);
+
+            while (!_abortingCompletion)
+            {
+                var pressed = Console.ReadKey(true);
+                if (pressed == abortKey ||
+                    pressed == Keys.Escape ||
+                    pressed == Keys.CtrlG)
+                {
+                    _abortingCompletion = true;
+                }
+            }
+            // cancel watchdog (idempotent), will NOT send abort
+            _explicitCancel.Cancel();
+
+            // ReSharper disable once AccessToModifiedClosure
+            if (!_gotCompletions)
+            {
+                // abort pipeline (idempotent, doesn't care if no pipeline running either)
+                ps.Stop();
+            }
+        }
+
+        private void WatchdogImpl(TimeSpan timeout, CancellationToken cancelToken)
+        {
+            try
+            {
+                var waiter = TaskHelper.Delay((int) timeout.TotalMilliseconds, cancelToken);
+                waiter.Wait();
+
+                // completion timeout
+                SendAbort();
+            }
+            catch (AggregateException e)
+            {
+                e.Handle(inner => inner is TaskCanceledException);
+            }
+        }
+
+        private void SpinnerImpl(CancellationTokenSource explicitCancel, int busyThreshold)
+        {
+            var pos = new Tuple<int, int>(Console.CursorLeft, Console.CursorTop);
+            var fg = Console.ForegroundColor;
+            var bg = Console.BackgroundColor;
+            bool shouldRestoreLine = false;
+
+            try
+            {
+                // allow 1.5 seconds before showing spinner
+                var waiter = TaskHelper.Delay(busyThreshold, explicitCancel.Token);
+                waiter.Wait();
+
+                shouldRestoreLine = true;
+
+                Console.CursorVisible = false;
+                Console.ForegroundColor = Options.EmphasisForegroundColor;
+
+                var frames = new[] {'-', '\\', '|', '/'};
+                int ix = 0;
+
+                while (true)
+                {
+                    Console.Write(frames[ix]);
+                    ix = (ix + 1)%4;
+
+                    Console.SetCursorPosition(pos.Item1, pos.Item2);
+
+                    var tick = TaskHelper.Delay(75, explicitCancel.Token);
+                    tick.Wait();
+                }
+            }
+            catch (AggregateException e)
+            {
+                e.Handle(inner => inner is TaskCanceledException);
+            }
+            finally
+            {
+                if (shouldRestoreLine)
+                {
+                    // erase final frame
+                    Console.Write(' ');
+                    Console.SetCursorPosition(pos.Item1, pos.Item2);
+                    Console.CursorVisible = true;
+                    Console.ForegroundColor = fg;
+                }
+            }
+        }
+
+        private CommandCompletion GetCompletionsImpl(System.Management.Automation.PowerShell ps)
+        {
+            try
+            {
+                if (_tabCommandCount == 0)
+                {
+                    try
+                    {
+                        _tabCompletions = null;
+
+                        // Could use the overload that takes an AST as it's faster (we've already parsed the
+                        // input for coloring) but that overload is a little more complicated in passing in the
+                        // cursor position.
+                        _tabCompletions = _mockableMethods.CompleteInput(_buffer.ToString(), _current, null, ps);
+
+                        if (_tabCompletions.CompletionMatches.Count == 0)
+                            return null;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                return _tabCompletions;
+            }
+            finally
+            {
+                ps.Dispose();
+            }
         }
 
         private void Complete(bool forward)

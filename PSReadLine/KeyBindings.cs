@@ -4,6 +4,7 @@ Copyright (c) Microsoft Corporation.  All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Management.Automation;
@@ -380,6 +381,18 @@ namespace Microsoft.PowerShell
             _singleton._console.WriteLine(buffer.ToString());
             _singleton._initialY = _singleton._console.CursorTop;
             _singleton.Render();
+        }
+
+        /// <summary>
+        /// Inject ESC into the current process's input loop
+        /// </summary>
+        /// <returns></returns>
+        public static bool SendAbort()
+        {
+            int VK_ESC = 0x1B;
+            uint WM_KEYDOWN = 0x100;
+            var hWnd = Process.GetCurrentProcess().MainWindowHandle;
+            return NativeMethods.PostMessage(hWnd, WM_KEYDOWN, VK_ESC, 0);
         }
     }
 }
