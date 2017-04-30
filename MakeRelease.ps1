@@ -1,15 +1,26 @@
 [CmdletBinding()]
 param([switch]$Install, [switch]$BuildChocolatey)
 
+# restore nuget packages
+$nugetExe = (Get-Command nuget.exe -ea Ignore).Path
+if ($null -eq $nugetExe)
+{
+    $nugetExe = "${env:TEMP}\nuget.exe"
+    if (!(Test-Path $nugetExe))
+    {
+        iwr http://nuget.org/nuget.exe -OutFile $nugetExe
+    }
+}
+& $nugetExe restore $PSScriptRoot\PSReadline\PSReadline.sln
+
 # generate external help
 if (!(Get-Module platyPS -List) -and !(Get-Module platyPS))
 {
-    Write-Warning -Message "Requires platyPS to generate help: Install-Module platyPS; Import-Module platyPS"
+    Write-Error -Message "Requires platyPS to generate help: Install-Module platyPS; Import-Module platyPS"
 }
 else
 {
-    $maml = platyPS\Get-PlatyPSExternalHelp -markdown (cat -raw $PSScriptRoot\PSReadline\en-US\PSReadline.md)
-    Set-Content -Value $maml -Path $PSScriptRoot\PSReadline\en-US\PSReadline.dll-help.xml -Encoding UTF8
+    platyPS\New-ExternalHelp $PSScriptRoot\docs -Force -OutputPath $PSScriptRoot\PSReadline\en-US
 }
 # end generate external help
 
@@ -45,7 +56,6 @@ foreach ($file in $files)
 }
 
 $files = @('PSReadline\en-US\about_PSReadline.help.txt',
-           'PSReadline\en-US\PSReadline.md',
            'PSReadline\en-US\PSReadline.dll-help.xml')
 
 foreach ($file in $files)

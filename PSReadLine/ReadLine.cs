@@ -17,6 +17,7 @@ using Microsoft.PowerShell.Commands;
 using Microsoft.PowerShell.Internal;
 
 [module: SuppressMessage("Microsoft.Design", "CA1014:MarkAssembliesWithClsCompliant")]
+[module: SuppressMessage("Microsoft.Design", "CA1026:DefaultParametersShouldNotBeUsed")]
 
 namespace Microsoft.PowerShell
 {
@@ -252,6 +253,14 @@ namespace Microsoft.PowerShell
         public static string ReadLine(Runspace runspace, EngineIntrinsics engineIntrinsics)
         {
             var console = _singleton._console;
+
+            // If either stdin or stdout is redirected, PSReadline doesn't really work, so throw
+            // and let PowerShell call Console.ReadLine or do whatever else it decides to do.
+            if (console.IsHandleRedirected(stdin: false) || console.IsHandleRedirected(stdin: true))
+            {
+                throw new NotSupportedException();
+            }
+
             _singleton._prePSReadlineConsoleMode = console.GetConsoleInputMode();
             bool firstTime = true;
             while (true)
